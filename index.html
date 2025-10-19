@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lizenzmanager</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap');
+:root{--neon1:#00fff7;--neon2:#ff00ff;background-color:#0a0a0a}
+html,body{height:100%;margin:0;padding:0;font-family:'Orbitron',sans-serif;background:var(--background);}
+body{padding:20px;display:flex;flex-direction:column;align-items:center;color:var(--neon1);}
+header h1{text-align:center;color:var(--neon2);text-shadow:0 0 5px var(--neon2),0 0 10px var(--neon2),0 0 20px var(--neon2);margin-bottom:20px;}
+.card{background:rgba(0,0,0,0.6);border-radius:20px;box-shadow:0 0 20px var(--neon1);padding:20px;margin-bottom:20px;transition:transform 0.3s,box-shadow 0.3s;width:100%;max-width:1100px;}
+.card:hover{transform:translateY(-5px);box-shadow:0 0 40px var(--neon2),0 0 60px var(--neon1);}
+form{display:grid;grid-template-columns:repeat(2,1fr);gap:15px;}
+label{display:block;margin-top:10px;}
+input,textarea,select,button{font-family:'Orbitron',sans-serif;border-radius:12px;border:1px solid var(--neon1);background:rgba(0,0,0,0.5);color:var(--neon1);padding:10px;transition:all .25s;}
+input:focus,textarea:focus,select:focus{border-color:var(--neon2);box-shadow:0 0 10px var(--neon2);outline:none;}
+button{cursor:pointer;background:linear-gradient(45deg,var(--neon2),var(--neon1));color:#000;border:none;font-weight:700;}
+button:hover{transform:scale(1.03);box-shadow:0 0 15px var(--neon2),0 0 25px var(--neon1);}
+.list .item{background:rgba(0,0,0,0.6);border:1px solid var(--neon1);border-radius:15px;padding:12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;transition:all .25s;}
+.list .item:hover{background:rgba(0,0,0,0.8);box-shadow:0 0 20px var(--neon2);}
+.muted{color:#888}.badge{background:var(--neon2);color:#000;padding:2px 6px;border-radius:8px;font-size:.8rem;}
+.controls button{margin-right:8px;margin-top:10px;}
+.search input,.search select{margin-bottom:15px;}
+textarea{resize:vertical;min-height:60px}.full{grid-column:1/-1}
+.overlay{position:fixed;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.7),rgba(0,0,0,.85));display:flex;align-items:center;justify-content:center;z-index:999}
+.login{background:rgba(0,0,0,.55);border:1px solid var(--neon1);padding:28px;border-radius:14px;box-shadow:0 0 30px var(--neon2);width:380px;max-width:90%;text-align:center;}
+.login h2{margin:0 0 10px;color:var(--neon2);}
+.smallbtn{padding:8px 10px;border-radius:10px;border:0;background:linear-gradient(45deg,var(--neon2),var(--neon1));cursor:pointer;}
+.danger{background:#ef4444;color:#fff;}
+</style>
+</head>
+<body>
+<header><h1>Lizenzmanager & Saver</h1></header>
+
+<div id="app" style="width:100%;max-width:1100px">
+<section class="card" id="mainApp" style="display:none">
+<form id="entryForm">
+  <div><label for="title">Name / Produkt</label><input id="title" required placeholder="z. B. Photoshop, Office..." /></div>
+  <div><label for="email">E-Mail</label><input id="email" type="email" placeholder="email@domain.de" /></div>
+  <div><label for="password">Passwort (optional)</label><input id="password" placeholder="Passwort" /></div>
+  <div><label for="key">Lizenz-Key</label><input id="key" placeholder="XXXX-XXXX-XXXX" /></div>
+  <div class="full"><label for="note">Notizen / Tags</label><textarea id="note" placeholder="z. B. Kaufdatum, Händler, Sonstiges"></textarea></div>
+  <div class="full" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+    <div class="controls">
+      <button id="saveBtn" type="button">Speichern</button>
+      <button type="button" id="clearBtn">Form zurücksetzen</button>
+      <button type="button" id="exportBtn">Export (JSON)</button>
+      <button type="button" id="importBtn">Import (JSON)</button>
+    </div>
+  </div>
+</form>
+<div class="search" style="display:flex;gap:8px;margin-top:15px;">
+  <input id="filter" placeholder="Suche nach Name, E-Mail, Key oder Tag..." style="flex:1;" />
+  <select id="sort"><option value="new">Neu zuerst</option><option value="old">Alt zuerst</option><option value="title">Name A→Z</option></select>
+</div>
+<div id="list" class="list" style="margin-top:15px;"></div>
+</section>
+</div>
+
+<div id="loginOverlay" class="overlay">
+<div class="login">
+  <h2>Login</h2>
+  <input id="loginInput" placeholder="Master-Passwort" type="password" style="width:100%;padding:8px;margin-top:10px;" />
+  <div style="margin-top:12px;"><button id="loginBtn" class="smallbtn">Anmelden</button></div>
+</div>
+</div>
+
+<input id="fileInput" type="file" accept="application/json" style="display:none" />
+
+<script>
+const MASTER_HASH='c2e6d830aeb6f2227dd03c31f201f6fd252535814a2a720d5392c1af5f016b1b';
+const loginOverlay=document.getElementById('loginOverlay');
+const loginInput=document.getElementById('loginInput');
+const loginBtn=document.getElementById('loginBtn');
+
+async function sha256(msg){
+  const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+async function unlockApp(){
+  loginOverlay.style.display='none';
+  document.getElementById('mainApp').style.display='block';
+  initApp();
+}
+
+loginBtn.addEventListener('click',async()=>{
+  const hash=await sha256(loginInput.value);
+  if(hash===MASTER_HASH){ unlockApp(); }
+  else{ alert('Falsches Passwort!'); }
+});
+
+function initApp(){
+  const STORAGE_KEY='lizenzmanager_v1';
+  const form=document.getElementById('entryForm');
+  const titleIn=document.getElementById('title');
+  const emailIn=document.getElementById('email');
+  const passwordIn=document.getElementById('password');
+  const keyIn=document.getElementById('key');
+  const noteIn=document.getElementById('note');
+  const listEl=document.getElementById('list');
+  const saveBtn=document.getElementById('saveBtn');
+  const clearBtn=document.getElementById('clearBtn');
+  const exportBtn=document.getElementById('exportBtn');
+  const importBtn=document.getElementById('importBtn');
+  const fileInput=document.getElementById('fileInput');
+  const filter=document.getElementById('filter');
+  const sort=document.getElementById('sort');
+
+  let items=JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
+  let editingId=null;
+
+  function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+  function saveStorage(){ localStorage.setItem(STORAGE_KEY,JSON.stringify(items)); }
+
+  function renderList(){
+    const term=filter.value.toLowerCase();
+    let sorted=[...items];
+    if(sort.value==='new') sorted.sort((a,b)=>b.timestamp-a.timestamp);
+    if(sort.value==='old') sorted.sort((a,b)=>a.timestamp-b.timestamp);
+    if(sort.value==='title') sorted.sort((a,b)=>a.title.localeCompare(b.title));
+    listEl.innerHTML='';
+    sorted.forEach(item=>{
+      if(term && ![item.title,item.email,item.key,item.note].some(f=>f.toLowerCase().includes(term))) return;
+      const div=document.createElement('div'); div.className='item';
+      div.innerHTML=`<div>
+        <strong>${item.title}</strong> <span class="muted">${item.email}</span> <span class="badge">${item.key}</span>
+        <div class="muted">${item.note}</div>
+      </div>`;
+      const btnDiv=document.createElement('div');
+      const copyBtn=document.createElement('button'); copyBtn.textContent='Kopieren'; copyBtn.className='smallbtn';
+      copyBtn.onclick=()=>{navigator.clipboard.writeText(item.key); alert('Key kopiert!');};
+      const delBtn=document.createElement('button'); delBtn.textContent='Löschen'; delBtn.className='smallbtn danger';
+      delBtn.onclick=()=>{ if(confirm('Löschen?')){items=items.filter(i=>i.id!==item.id); saveStorage(); renderList();} };
+      btnDiv.appendChild(copyBtn); btnDiv.appendChild(delBtn);
+      div.appendChild(btnDiv);
+      listEl.appendChild(div);
+    });
+  }
+
+  saveBtn.addEventListener('click',()=>{
+    const obj={title:titleIn.value,email:emailIn.value,password:passwordIn.value,key:keyIn.value,note:noteIn.value,timestamp:Date.now(),id:editingId||uid()};
+    if(editingId) items=items.map(i=>i.id===editingId?obj:i); else items.push(obj);
+    saveStorage(); renderList(); form.reset(); editingId=null;
+  });
+
+  clearBtn.addEventListener('click',()=>{ form.reset(); editingId=null; });
+
+  exportBtn.addEventListener('click',()=>{
+    const dataStr=JSON.stringify(items,null,2);
+    const blob=new Blob([dataStr],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='lizenzmanager_backup.json'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  importBtn.addEventListener('click',()=>fileInput.click());
+  fileInput.addEventListener('change',async(ev)=>{
+    const file=ev.target.files[0]; if(!file) return;
+    const text=await file.text();
+    try{
+      const imported=JSON.parse(text);
+      if(Array.isArray(imported)){items=imported; saveStorage(); renderList(); alert('Import erfolgreich!');}
+      else alert('Ungültige Datei!');
+    } catch(e){alert('Fehler beim Import: '+e);}
+  });
+
+  filter.addEventListener('input', renderList);
+  sort.addEventListener('change', renderList);
+
+  renderList();
+}
+</script>
+</body>
+</html>
